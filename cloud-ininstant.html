@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <meta charset="UTF-8">
     <title>Parametric YAML Editor</title>
@@ -14,6 +15,7 @@
             --editor-text: #212529;
             --header-background: #007bff;
             --header-text: #ffffff;
+            --form-overlay-color: rgba(0, 0, 0, 0.1);
         }
 
         @media (prefers-color-scheme: dark) {
@@ -24,6 +26,7 @@
                 --editor-text: #e0e0e0;
                 --header-background: #0056b3;
                 --header-text: #ffffff;
+                --form-overlay-color: rgba(255, 255, 255, 0.1);
             }
         }
 
@@ -32,38 +35,8 @@
             color: var(--text-color);
             padding: 0;
             margin: 0;
-        }
-
-        .editor {
-            font-family: monospace;
-            height: 80vh;
-            background-color: var(--editor-background);
-            color: var(--editor-text);
-            padding: 10px;
-            border: none;
-            resize: none;
-            width: 100%;
-        }
-
-        .column {
-            height: 100%;
-            padding: 20px;
-        }
-
-        #editor-error, #export-error {
-            margin-top: 5px;
-        }
-
-        .form-group {
-            margin-bottom: 1rem;
-        }
-
-        .input-group-append .btn {
-            margin-left: 5px;
-        }
-
-        .input-group select {
-            max-width: 150px;
+            overflow: hidden;
+            /* Prevent body from scrolling */
         }
 
         header {
@@ -73,10 +46,82 @@
             text-align: center;
         }
 
+        .container-fluid {
+            height: calc(100vh - 130px);
+            /* Adjust for header and footer height */
+            overflow: hidden;
+        }
+
+        .column {
+            height: 100%;
+            padding: 10px;
+        }
+
+        .editor {
+            font-family: monospace;
+            height: 100%;
+            background-color: var(--editor-background);
+            color: var(--editor-text);
+            padding: 10px;
+            border: 1px solid #ced4da;
+            resize: none;
+            width: 100%;
+            box-sizing: border-box;
+            overflow: auto;
+        }
+
+        #editor-error,
+        #export-error {
+            margin-top: 5px;
+        }
+
+        #variable-form {
+            height: 100%;
+            overflow: auto;
+            position: relative;
+        }
+
+        #form-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: var(--form-overlay-color);
+            display: none;
+            z-index: 10;
+        }
+
+        .form-group {
+            margin-bottom: 0.5rem;
+        }
+
+        .form-group label {
+            font-size: 0.9rem;
+        }
+
+        .input-group {
+            flex-wrap: nowrap;
+        }
+
+        .input-group .form-control {
+            font-size: 0.85rem;
+            padding: 2px 5px;
+        }
+
+        .btn {
+            font-size: 0.85rem;
+        }
+
         footer {
             background-color: var(--editor-background);
             padding: 10px 20px;
             text-align: center;
+            position: fixed;
+            width: 100%;
+            bottom: 0;
+            left: 0;
+            border-top: 1px solid #ced4da;
         }
 
         textarea:focus {
@@ -84,12 +129,13 @@
         }
     </style>
 </head>
+
 <body>
     <header>
         <h1>Parametric YAML Editor</h1>
     </header>
     <div class="container-fluid">
-        <div class="row no-gutters">
+        <div class="row no-gutters" style="height: 100%;">
             <!-- Left Column: Text Editor -->
             <div class="col-md-6 column">
                 <textarea id="yaml-editor" class="editor" spellcheck="false"></textarea>
@@ -97,9 +143,10 @@
             </div>
             <!-- Right Column: Form -->
             <div class="col-md-6 column">
-                <form id="variable-form">
+                <div id="variable-form">
                     <!-- Variable inputs will be generated here -->
-                </form>
+                    <div id="form-overlay"></div>
+                </div>
                 <div id="export-error" class="text-danger"></div>
             </div>
         </div>
@@ -114,393 +161,359 @@
     <!-- Include a YAML parser -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/3.13.1/js-yaml.min.js"></script>
     <script>
-$(document).ready(function() {
-    var yamlEditor = $('#yaml-editor');
-    var editorError = $('#editor-error');
-    var exportError = $('#export-error');
-    var variableForm = $('#variable-form');
+        $(document).ready(function () {
+            var yamlEditor = $('#yaml-editor');
+            var editorError = $('#editor-error');
+            var exportError = $('#export-error');
+            var variableForm = $('#variable-form');
+            var formOverlay = $('#form-overlay');
+            var parseTimeout;
 
-    // Load saved state if available
-    loadState();
+            // Restore localStorage from stored-values-script
+            restoreStoredValues();
 
-    function parseYAML() {
-        var yamlText = yamlEditor.val();
-        try {
-            // Parse YAML
-            var yamlDoc = jsyaml.safeLoad(yamlText);
-            editorError.text('');
-        } catch (e) {
-            editorError.text('YAML Parse Error: ' + e.message);
-        }
-        // Now find all the {{ }} identifiers
-        var identifiers = findIdentifiers(yamlText);
-        // Build the form
-        buildForm(identifiers);
-    }
+            // Load saved state if available
+            loadState();
 
-    yamlEditor.on('input', function() {
-        parseYAML();
-    });
+            function parseYAML() {
+                var yamlText = yamlEditor.val();
+                try {
+                    // Parse YAML
+                    var yamlDoc = jsyaml.safeLoad(yamlText);
+                    editorError.text('');
+                } catch (e) {
+                    editorError.text('YAML Parse Error: ' + e.message);
+                }
+                // Now find all the {{ }} identifiers
+                var identifiers = findIdentifiers(yamlText);
+                // Build the form
+                buildForm(identifiers);
+                // Hide the form overlay
+                formOverlay.hide();
+            }
 
-    // Initial parse on load
-    parseYAML();
+            // Debounce the YAML parsing and form update
+            yamlEditor.on('input', function () {
+                // Show the form overlay
+                formOverlay.show();
+                clearTimeout(parseTimeout);
+                parseTimeout = setTimeout(parseYAML, 500);
+            });
 
-    function findIdentifiers(yamlText) {
-        var identifiers = {};
-        try {
-            var yamlDoc = jsyaml.safeLoad(yamlText);
+            // Initial parse on load
+            parseYAML();
 
-            function traverse(node) {
-                if (typeof node === 'string') {
-                    var matches = node.match(/{{\s*(.*?)\s*}}/g);
-                    if (matches) {
-                        matches.forEach(function(match) {
-                            var content = match.slice(2, -2).trim(); // remove {{ }}
-                            var parts = content.split('=');
-                            var identifier = parts[0].trim();
-                            var defaultValue = parts[1] ? parts.slice(1).join('=').trim() : null;
+            function findIdentifiers(yamlText) {
+                var identifiers = {};
+                try {
+                    var yamlDoc = jsyaml.safeLoad(yamlText);
 
-                            // Check identifier format (camel, snake, or kebab case)
-                            var validIdentifier = /^[a-zA-Z][a-zA-Z0-9_-]*$/.test(identifier);
-                            if (!validIdentifier) {
-                                throw new Error('Invalid identifier format: ' + identifier);
-                            }
+                    function traverse(node) {
+                        if (typeof node === 'string') {
+                            var matches = node.match(/{{\s*(.*?)\s*}}/g);
+                            if (matches) {
+                                matches.forEach(function (match) {
+                                    var content = match.slice(2, -2).trim(); // remove {{ }}
+                                    var parts = content.split('=');
+                                    var identifier = parts[0].trim();
+                                    var defaultValue = parts[1] ? parts.slice(1).join('=').trim() : null;
 
-                            if (!identifiers[identifier]) {
-                                identifiers[identifier] = {
-                                    defaultValue: defaultValue,
-                                    hasMultipleDefaults: false
-                                };
-                            } else {
-                                // Check for multiple defaults
-                                if (defaultValue) {
-                                    if (identifiers[identifier].defaultValue && identifiers[identifier].defaultValue !== defaultValue) {
-                                        identifiers[identifier].hasMultipleDefaults = true;
-                                    } else {
-                                        identifiers[identifier].defaultValue = defaultValue;
+                                    // Check identifier format (camel, snake, or kebab case)
+                                    var validIdentifier = /^[a-zA-Z][a-zA-Z0-9_-]*$/.test(identifier);
+                                    if (!validIdentifier) {
+                                        throw new Error('Invalid identifier format: ' + identifier);
                                     }
-                                }
+
+                                    if (!identifiers[identifier]) {
+                                        identifiers[identifier] = {
+                                            defaultValue: defaultValue,
+                                            hasMultipleDefaults: false
+                                        };
+                                    } else {
+                                        // Check for multiple defaults
+                                        if (defaultValue) {
+                                            if (identifiers[identifier].defaultValue && identifiers[identifier].defaultValue !== defaultValue) {
+                                                identifiers[identifier].hasMultipleDefaults = true;
+                                            } else {
+                                                identifiers[identifier].defaultValue = defaultValue;
+                                            }
+                                        }
+                                    }
+                                });
                             }
-                        });
+                        } else if (Array.isArray(node)) {
+                            node.forEach(function (item) {
+                                traverse(item);
+                            });
+                        } else if (typeof node === 'object' && node !== null) {
+                            Object.values(node).forEach(function (value) {
+                                traverse(value);
+                            });
+                        }
                     }
-                } else if (Array.isArray(node)) {
-                    node.forEach(function(item) {
-                        traverse(item);
-                    });
-                } else if (typeof node === 'object' && node !== null) {
-                    Object.values(node).forEach(function(value) {
-                        traverse(value);
-                    });
+
+                    traverse(yamlDoc);
+
+                } catch (e) {
+                    // If there's an error in parsing, we can just return an empty list of identifiers
+                    editorError.text('YAML Parse Error: ' + e.message);
                 }
+                return identifiers;
             }
 
-            traverse(yamlDoc);
-
-        } catch (e) {
-            // If there's an error in parsing, we can just return an empty list of identifiers
-            editorError.text('YAML Parse Error: ' + e.message);
-        }
-        return identifiers;
-    }
-
-    function getStoredValues(identifier) {
-        var stored = localStorage.getItem('values_' + identifier);
-        if (stored) {
-            return JSON.parse(stored);
-        } else {
-            return [];
-        }
-    }
-
-    function saveStoredValues(identifier, values) {
-        localStorage.setItem('values_' + identifier, JSON.stringify(values));
-    }
-
-    function buildForm(identifiers) {
-        variableForm.empty();
-        for (var identifier in identifiers) {
-            var info = identifiers[identifier];
-            var formGroup = $('<div class="form-group"></div>');
-            var label = $('<label></label>').text(identifier);
-            var inputGroup = $('<div class="input-group"></div>');
-            var input = $('<input type="text" class="form-control" />').attr('name', identifier);
-
-            // Set initial value to defaultValue if present
-            var savedValue = sessionStorage.getItem('input_' + identifier) || info.defaultValue || '';
-            input.val(savedValue);
-
-            // Create dropdown select
-            var select = $('<select class="custom-select"></select>');
-            // Add an empty option to allow clearing the selection
-            select.append('<option value=""></option>');
-            // Get stored values from localStorage
-            var storedValues = getStoredValues(identifier);
-
-            // Ensure default value is in the dropdown
-            if (info.defaultValue && storedValues.indexOf(info.defaultValue) === -1) {
-                storedValues.unshift(info.defaultValue);
-                saveStoredValues(identifier, storedValues);
-            }
-
-            storedValues.forEach(function(val) {
-                var option = $('<option></option>').attr('value', val).text(val);
-                select.append(option);
-            });
-
-            // Append elements to input group
-            inputGroup.append(input);
-            inputGroup.append(select);
-
-            // Add buttons
-            var addButton = $('<button class="btn btn-outline-secondary" type="button">Add</button>');
-            var removeButton = $('<button class="btn btn-outline-danger" type="button">Remove</button>');
-
-            // Event handlers for add/remove buttons
-            addButton.on('click', (function(identifier, input, select) {
-                return function() {
-                    var val = input.val().trim();
-                    var storedValues = getStoredValues(identifier);
-                    if (val && storedValues.indexOf(val) === -1) {
-                        storedValues.push(val);
-                        saveStoredValues(identifier, storedValues);
-                        select.append($('<option></option>').attr('value', val).text(val));
-                    }
-                };
-            })(identifier, input, select));
-
-            removeButton.on('click', (function(identifier, input, select) {
-                return function() {
-                    var val = input.val().trim();
-                    var storedValues = getStoredValues(identifier);
-                    var index = storedValues.indexOf(val);
-                    if (index !== -1) {
-                        storedValues.splice(index, 1);
-                        saveStoredValues(identifier, storedValues);
-                        select.find('option[value="' + val + '"]').remove();
-                    }
-                };
-            })(identifier, input, select));
-
-            // Update input when select changes
-            select.on('change', function() {
-                input.val($(this).val());
-            });
-
-            // Update select when input changes
-            input.on('input', function() {
-                var val = $(this).val();
-                var matchingOption = select.find('option').filter(function() {
-                    return $(this).val() === val;
-                });
-                if (matchingOption.length > 0) {
-                    select.val(val);
+            function getStoredValues(identifier) {
+                var stored = localStorage.getItem('values_' + identifier);
+                if (stored) {
+                    return JSON.parse(stored);
                 } else {
-                    select.val('');
+                    return [];
                 }
-            });
+            }
 
-            // Save input value to sessionStorage on change
-            input.on('input', (function(identifier) {
-                return function() {
-                    sessionStorage.setItem('input_' + identifier, $(this).val());
+            function saveStoredValues(identifier, values) {
+                localStorage.setItem('values_' + identifier, JSON.stringify(values));
+            }
+
+            function buildForm(identifiers) {
+                variableForm.empty();
+                variableForm.append(formOverlay);
+                for (var identifier in identifiers) {
+                    var info = identifiers[identifier];
+                    var formGroup = $('<div class="form-group"></div>');
+                    var label = $('<label></label>').text(identifier);
+                    var inputGroup = $('<div class="input-group"></div>');
+                    var input = $('<input type="text" class="form-control" />').attr('name', identifier);
+
+                    // Set initial value to defaultValue if present
+                    var savedValue = sessionStorage.getItem('input_' + identifier) || info.defaultValue || '';
+                    input.val(savedValue);
+
+                    // Create datalist for known options
+                    var datalistId = 'datalist_' + identifier;
+                    var datalist = $('<datalist></datalist>').attr('id', datalistId);
+                    input.attr('list', datalistId);
+
+                    // Get stored values from localStorage
+                    var storedValues = getStoredValues(identifier);
+
+                    // Ensure default value is in the stored values
+                    if (info.defaultValue && storedValues.indexOf(info.defaultValue) === -1) {
+                        storedValues.unshift(info.defaultValue);
+                        saveStoredValues(identifier, storedValues);
+                    }
+
+                    storedValues.forEach(function (val) {
+                        var option = $('<option></option>').attr('value', val);
+                        datalist.append(option);
+                    });
+
+                    // Save input value to sessionStorage on change
+                    input.on('input', (function (identifier) {
+                        return function () {
+                            var val = $(this).val().trim();
+                            sessionStorage.setItem('input_' + identifier, val);
+                            // If the value is not in storedValues, add it
+                            var storedValues = getStoredValues(identifier);
+                            if (val && storedValues.indexOf(val) === -1) {
+                                storedValues.push(val);
+                                saveStoredValues(identifier, storedValues);
+                            }
+                        };
+                    })(identifier));
+
+                    // Append elements to input group
+                    inputGroup.append(input);
+                    inputGroup.append(datalist);
+
+                    // Append elements to form group
+                    formGroup.append(label);
+                    formGroup.append(inputGroup);
+
+                    // Display error if multiple defaults
+                    if (info.hasMultipleDefaults) {
+                        formGroup.append($('<div class="text-danger"></div>').text('Error: Multiple default values for ' + identifier));
+                    }
+
+                    variableForm.append(formGroup);
+                }
+            }
+
+            function interpolateYAML(yamlText, values) {
+                var emptyIdentifiers = [];
+                // Replace all {{ identifier }} with the corresponding values
+                var output = yamlText.replace(/{{\s*(.*?)\s*}}/g, function (match, p1) {
+                    var content = p1.trim();
+                    var parts = content.split('=');
+                    var identifier = parts[0].trim();
+                    var value = '';
+                    if (values.hasOwnProperty(identifier)) {
+                        value = values[identifier].trim();
+                    } else if (parts[1]) {
+                        // Use default value if present
+                        value = parts.slice(1).join('=').trim();
+                    }
+                    value = value.trim();
+                    if (value === '') {
+                        emptyIdentifiers.push(identifier);
+                    }
+                    return value;
+                });
+                return {
+                    output: output,
+                    emptyIdentifiers: emptyIdentifiers
                 };
-            })(identifier));
-
-            // Append buttons
-            var buttonGroup = $('<div class="input-group-append"></div>');
-            buttonGroup.append(addButton);
-            buttonGroup.append(removeButton);
-            inputGroup.append(buttonGroup);
-
-            // Append elements to form group
-            formGroup.append(label);
-            formGroup.append(inputGroup);
-
-            // Display error if multiple defaults
-            if (info.hasMultipleDefaults) {
-                formGroup.append($('<div class="text-danger"></div>').text('Error: Multiple default values for ' + identifier));
             }
 
-            variableForm.append(formGroup);
-
-            // Trigger input event to update select based on initial input value
-            input.trigger('input');
-        }
-    }
-
-    function interpolateYAML(yamlText, values) {
-        var emptyIdentifiers = [];
-        // Replace all {{ identifier }} with the corresponding values
-        var output = yamlText.replace(/{{\s*(.*?)\s*}}/g, function(match, p1) {
-            var content = p1.trim();
-            var parts = content.split('=');
-            var identifier = parts[0].trim();
-            var value = '';
-            if (values.hasOwnProperty(identifier)) {
-                value = values[identifier].trim();
-            } else if (parts[1]) {
-                // Use default value if present
-                value = parts.slice(1).join('=').trim();
+            function downloadFile(filename, content) {
+                var blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+                var url = URL.createObjectURL(blob);
+                var a = $('<a></a>').attr('href', url).attr('download', filename).appendTo('body');
+                a[0].click();
+                URL.revokeObjectURL(url);
+                a.remove();
             }
-            value = value.trim();
-            if (value === '') {
-                emptyIdentifiers.push(identifier);
-            }
-            return value;
-        });
-        return {
-            output: output,
-            emptyIdentifiers: emptyIdentifiers
-        };
-    }
 
-    function downloadFile(filename, content) {
-        var blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-        var url = URL.createObjectURL(blob);
-        var a = $('<a></a>').attr('href', url).attr('download', filename).appendTo('body');
-        a[0].click();
-        URL.revokeObjectURL(url);
-        a.remove();
-    }
+            $('#export-button').on('click', function () {
+                exportError.text(''); // Clear previous errors
+                var yamlText = yamlEditor.val();
+                var values = {};
+                // Get values from the form
+                $('#variable-form input[type="text"]').each(function () {
+                    var name = $(this).attr('name');
+                    var value = $(this).val().trim();
+                    values[name] = value;
+                });
+                // Replace the identifiers in the YAML text
+                var interpolationResult = interpolateYAML(yamlText, values);
+                var outputYAML = interpolationResult.output;
+                var emptyIdentifiers = interpolationResult.emptyIdentifiers;
 
-    $('#export-button').on('click', function() {
-        exportError.text(''); // Clear previous errors
-        var yamlText = yamlEditor.val();
-        var values = {};
-        var hasEmptyFields = false;
-        // Get values from the form
-        $('#variable-form input[type="text"]').each(function() {
-            var name = $(this).attr('name');
-            var value = $(this).val().trim();
-            values[name] = value;
-        });
-        // Replace the identifiers in the YAML text
-        var interpolationResult = interpolateYAML(yamlText, values);
-        var outputYAML = interpolationResult.output;
-        var emptyIdentifiers = interpolationResult.emptyIdentifiers;
-
-        if (emptyIdentifiers.length > 0) {
-            // Display error and prevent export
-            exportError.text('Error: The following fields are empty after trimming: ' + emptyIdentifiers.join(', '));
-            return;
-        }
-        // Trigger download
-        downloadFile('output.yaml', outputYAML);
-    });
-
-    $('#save-button').on('click', function() {
-        // Update the value attributes of inputs and the content of the textarea
-        updateFormValues();
-        // Include stored dropdown options in the page
-        includeStoredValues();
-        // Serialize the page
-        var htmlContent = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
-        var blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
-        var url = URL.createObjectURL(blob);
-        var a = $('<a></a>').attr('href', url).attr('download', 'page.html').appendTo('body');
-        a[0].click();
-        URL.revokeObjectURL(url);
-        a.remove();
-    });
-
-    function updateFormValues() {
-        // Update the textarea content
-        var yamlContent = yamlEditor.val();
-        $('#yaml-editor').text(yamlContent);
-        // Update input values
-        $('#variable-form input[type="text"]').each(function() {
-            var value = $(this).val();
-            $(this).attr('value', value);
-        });
-        // Update select options and selected values
-        $('#variable-form select').each(function() {
-            var select = $(this);
-            var optionsHtml = '';
-            select.find('option').each(function() {
-                var option = $(this);
-                var value = option.val();
-                var text = option.text();
-                var selected = '';
-                if (select.val() === value) {
-                    selected = ' selected';
+                if (emptyIdentifiers.length > 0) {
+                    // Display error and prevent export
+                    exportError.text('Error: The following fields are empty after trimming: ' + emptyIdentifiers.join(', '));
+                    return;
                 }
-                optionsHtml += '<option value="' + value + '"' + selected + '>' + text + '</option>';
+                // Trigger download
+                downloadFile('output.yaml', outputYAML);
             });
-            select.html(optionsHtml);
-            // Set selectedIndex if no value is selected
-            if (select.val() === '') {
-                select.prop('selectedIndex', -1);
+
+            $('#save-button').on('click', function () {
+                // Update the value attributes of inputs and the content of the textarea
+                updateFormValues();
+                // Include stored dropdown options in the page
+                includeStoredValues();
+                // Serialize the page
+                var htmlContent = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+                var blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+                var url = URL.createObjectURL(blob);
+                var a = $('<a></a>').attr('href', url).attr('download', 'page.html').appendTo('body');
+                a[0].click();
+                URL.revokeObjectURL(url);
+                a.remove();
+            });
+
+            function updateFormValues() {
+                // Update the textarea content
+                var yamlContent = yamlEditor.val();
+                $('#yaml-editor').text(yamlContent);
+                // Update input values
+                $('#variable-form input[type="text"]').each(function () {
+                    var value = $(this).val();
+                    $(this).attr('value', value);
+                });
+                // Update datalist options
+                $('#variable-form datalist').each(function () {
+                    var datalist = $(this);
+                    var identifier = datalist.attr('id').replace('datalist_', '');
+                    var storedValues = getStoredValues(identifier);
+                    var optionsHtml = '';
+                    storedValues.forEach(function (val) {
+                        optionsHtml += '<option value="' + val + '"></option>';
+                    });
+                    datalist.html(optionsHtml);
+                });
             }
+
+            function includeStoredValues() {
+                // Build the script content
+                var scriptContent = '<script id="stored-values-script">\n';
+                scriptContent += 'localStorage.clear();\n';
+                // Save stored dropdown options
+                for (var i = 0; i < localStorage.length; i++) {
+                    var key = localStorage.key(i);
+                    var value = localStorage.getItem(key);
+                    // Escape any occurrences of </sc ript> in the value
+                    value = value.replace(/<\/script>/g, '<\\/script>');
+                    scriptContent += 'localStorage.setItem(' + JSON.stringify(key) + ', ' + JSON.stringify(value) + ');\n';
+                }
+                scriptContent += '</' + 'script>\n';
+                // Remove existing stored values script if any
+                $('#stored-values-script').remove();
+                // Append the script to the body
+                $('body').append(scriptContent);
+            }
+
+            function restoreStoredValues() {
+                var storedValuesScript = document.getElementById('stored-values-script');
+                if (storedValuesScript) {
+                    try {
+                        eval(storedValuesScript.innerText);
+                    } catch (e) {
+                        console.error('Error restoring stored values:', e);
+                    }
+                }
+            }
+
+            function loadState() {
+                // Load the YAML content
+                var savedYaml = sessionStorage.getItem('yamlContent');
+                if (savedYaml) {
+                    yamlEditor.val(savedYaml);
+                }
+                // Load input values
+                for (var i = 0; i < sessionStorage.length; i++) {
+                    var key = sessionStorage.key(i);
+                    if (key.startsWith('input_')) {
+                        var identifier = key.substring(6);
+                        var value = sessionStorage.getItem(key);
+                        $('input[name="' + identifier + '"]').val(value);
+                    }
+                }
+            }
+
+            // Save YAML content to sessionStorage on change
+            yamlEditor.on('input', function () {
+                sessionStorage.setItem('yamlContent', $(this).val());
+            });
+
+            // Handle Tab and Shift+Tab in the editor
+            yamlEditor.on('keydown', function (e) {
+                if (e.key === 'Tab') {
+                    e.preventDefault();
+                    var start = this.selectionStart;
+                    var end = this.selectionEnd;
+                    var value = this.value;
+                    var lineStart = value.lastIndexOf('\n', start - 1) + 1;
+                    var lineEnd = value.indexOf('\n', end);
+                    if (lineEnd === -1) lineEnd = value.length;
+                    var currentLine = value.substring(lineStart, lineEnd);
+
+                    if (!e.shiftKey) {
+                        // Indent
+                        var newLine = currentLine.replace(/^/, '  ');
+                        this.value = value.substring(0, lineStart) + newLine + value.substring(lineEnd);
+                        this.selectionStart = this.selectionEnd = start + 2;
+                    } else {
+                        // Dedent
+                        var newLine = currentLine.replace(/^ {1,2}/, '');
+                        var dedentLength = currentLine.length - newLine.length;
+                        this.value = value.substring(0, lineStart) + newLine + value.substring(lineEnd);
+                        this.selectionStart = this.selectionEnd = Math.max(start - dedentLength, lineStart);
+                    }
+                }
+            });
         });
-    }
-
-    function includeStoredValues() {
-        // Include stored values in a script tag
-        var scriptContent = '<script>\n';
-        scriptContent += 'localStorage.clear();\n';
-        // Save stored dropdown options
-        for (var i = 0; i < localStorage.length; i++) {
-            var key = localStorage.key(i);
-            var value = localStorage.getItem(key);
-            scriptContent += 'localStorage.setItem(' + JSON.stringify(key) + ', ' + JSON.stringify(value) + ');\n';
-        }
-        scriptContent += '</' + 'script>';
-        // Remove existing stored values script if any
-        $('#stored-values-script').remove();
-        // Append the script to the body
-        $('body').append('<script id="stored-values-script">' + scriptContent + '<' + '/script>');
-    }
-
-    function loadState() {
-        // Load the YAML content
-        var savedYaml = sessionStorage.getItem('yamlContent');
-        if (savedYaml) {
-            yamlEditor.val(savedYaml);
-        }
-        // Load input values
-        for (var i = 0; i < sessionStorage.length; i++) {
-            var key = sessionStorage.key(i);
-            if (key.startsWith('input_')) {
-                var identifier = key.substring(6);
-                var value = sessionStorage.getItem(key);
-                $('input[name="' + identifier + '"]').val(value);
-            }
-        }
-    }
-
-    // Save YAML content to sessionStorage on change
-    yamlEditor.on('input', function() {
-        sessionStorage.setItem('yamlContent', $(this).val());
-    });
-
-    // Handle Tab and Shift+Tab in the editor
-    yamlEditor.on('keydown', function(e) {
-        if (e.key === 'Tab') {
-            e.preventDefault();
-            var start = this.selectionStart;
-            var end = this.selectionEnd;
-            var value = this.value;
-            var lines = value.substring(0, end).split('\n');
-            var lineStart = value.lastIndexOf('\n', start - 1) + 1;
-            var lineEnd = value.indexOf('\n', end);
-            if (lineEnd === -1) lineEnd = value.length;
-            var currentLine = value.substring(lineStart, lineEnd);
-
-            if (!e.shiftKey) {
-                // Indent
-                var newLine = currentLine.replace(/^/, '  ');
-                this.value = value.substring(0, lineStart) + newLine + value.substring(lineEnd);
-                this.selectionStart = this.selectionEnd = start + 2;
-            } else {
-                // Dedent
-                var newLine = currentLine.replace(/^ {1,2}/, '');
-                var dedentLength = currentLine.length - newLine.length;
-                this.value = value.substring(0, lineStart) + newLine + value.substring(lineEnd);
-                this.selectionStart = this.selectionEnd = Math.max(start - dedentLength, lineStart);
-            }
-        }
-    });
-});
     </script>
 </body>
+
 </html>
