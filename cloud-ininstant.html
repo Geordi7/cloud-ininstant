@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>YAML Editor and Interpolator</title>
+    <!-- Include necessary styles and scripts from known locations -->
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        /* Custom styles */
+        body {
+            padding: 20px;
+        }
+
+        .editor {
+            font-family: monospace;
+            height: 80vh;
+        }
+
+        .column {
+            height: 100%;
+        }
+
+        #editor-error {
+            margin-top: 5px;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .input-group-append .btn {
+            margin-left: 5px;
+        }
+
+        .input-group select {
+            max-width: 150px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Left Column: Text Editor -->
+            <div class="col-md-6 column">
+                <textarea id="yaml-editor" class="form-control editor"></textarea>
+                <div id="editor-error" class="text-danger"></div>
+            </div>
+            <!-- Right Column: Form -->
+            <div class="col-md-6 column">
+                <form id="variable-form">
+                    <!-- Variable inputs will be generated here -->
+                </form>
+                <button id="export-button" class="btn btn-primary">Export</button>
+                <button id="save-button" class="btn btn-secondary">Save Page</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Include necessary scripts -->
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+    <!-- Include a YAML parser -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/3.13.1/js-yaml.min.js"></script>
+    <script>
+        $(document).ready(function () {
+            var yamlEditor = $('#yaml-editor');
+            var editorError = $('#editor-error');
+            var variableForm = $('#variable-form');
+
+            function parseYAML() {
+                var yamlText = yamlEditor.val();
+                try {
+                    // Parse YAML
+                    var yamlDoc = jsyaml.safeLoad(yamlText);
+                    editorError.text('');
+                } catch (e) {
+                    editorError.text('YAML Parse Error: ' + e.message);
+                }
+                // Now find all the {{ }} identifiers
+                var identifiers = findIdentifiers(yamlText);
+                // Build the form
+                buildForm(identifiers);
+            }
+
+            yamlEditor.on('input', function () {
+                parseYAML();
+            });
+
+            // Initial parse on load
+            parseYAML();
+
+            function findIdentifiers(yamlText) {
+                var identifiers = {};
+                try {
+                    var yamlDoc = jsyaml.safeLoad(yamlText);
+
+                    function traverse(node) {
+                        if (typeof node === 'string') {
+                            var matches = node.match(/{{\s*(.*?)\s*}}/g);
+                            if (matches) {
+                                matches.forEach(function (match) {
+                                    var content = match.slice(2, -2).trim(); // remove {{ }}
+                                    var parts = content.split('=');
+                                    var identifier = parts[0].trim();
+                                    var defaultValue = parts[1] ? parts.slice(1).join('=').trim() : null;
+
+                                    // Check identifier format (camel, snake, or kebab case)
+                                    var validIdentifier = /^[a-zA-Z][a-zA-Z0-9_-]*$/.test(identifier);
+                                    if (!validIdentifier) {
+                                        throw new Error('Invalid identifier format: ' + identifier);
+                                    }
+
+                                    if (!identifiers[identifier]) {
+                                        identifiers[identifier] = {
+                                            defaultValue: defaultValue,
+                                            hasMultipleDefaults: false
+                                        };
+                                    } else {
+                                        // Check for multiple defaults
+                                        if (defaultValue) {
+                                            if (identifiers[identifier].defaultValue && identifiers[identifier].defaultValue !== defaultValue) {
+                                                identifiers[identifier].hasMultipleDefaults = true;
+                                            } else {
+                                                identifiers[identifier].defaultValue = defaultValue;
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                        } else if (Array.isArray(node)) {
+                            node.forEach(function (item) {
+                                traverse(item);
+                            });
+                        } else if (typeof node === 'object' && node !== null) {
+                            Object.values(node).forEach(function (value) {
+                                traverse(value);
+                            });
+                        }
+                    }
+
+                    traverse(yamlDoc);
+
+                } catch (e) {
+                    // If there's an error in parsing, we can just return an empty list of identifiers
+                    editorError.text('YAML Parse Error: ' + e.message);
+                }
+                return identifiers;
+            }
+
+            function getStoredValues(identifier) {
+                var stored = localStorage.getItem('values_' + identifier);
+                if (stored) {
+                    return JSON.parse(stored);
+                } else {
+                    return [];
+                }
+            }
+
+            function saveStoredValues(identifier, values) {
+                localStorage.setItem('values_' + identifier, JSON.stringify(values));
+            }
+
+            function buildForm(identifiers) {
+                variableForm.empty();
+                for (var identifier in identifiers) {
+                    var info = identifiers[identifier];
+                    var formGroup = $('<div class="form-group"></div>');
+                    var label = $('<label></label>').text(identifier);
+                    var inputGroup = $('<div class="input-group"></div>');
+                    var input = $('<input type="text" class="form-control" />').attr('name', identifier);
+
+                    // Set initial value to defaultValue if present
+                    input.val(info.defaultValue || '');
+
+                    // Create dropdown select
+                    var select = $('<select class="custom-select"></select>');
+                    // Get stored values from localStorage
+                    var storedValues = getStoredValues(identifier);
+                    storedValues.forEach(function (val) {
+                        var option = $('<option></option>').attr('value', val).text(val);
+                        select.append(option);
+                    });
+
+                    // Append elements to input group
+                    inputGroup.append(input);
+                    inputGroup.append(select);
+
+                    // Add buttons
+                    var addButton = $('<button class="btn btn-outline-secondary" type="button">Add</button>');
+                    var removeButton = $('<button class="btn btn-outline-danger" type="button">Remove</button>');
+
+                    // Event handlers for add/remove buttons
+                    addButton.on('click', (function (identifier, input, select) {
+                        return function () {
+                            var val = input.val();
+                            var storedValues = getStoredValues(identifier);
+                            if (val && storedValues.indexOf(val) === -1) {
+                                storedValues.push(val);
+                                saveStoredValues(identifier, storedValues);
+                                select.append($('<option></option>').attr('value', val).text(val));
+                            }
+                        };
+                    })(identifier, input, select));
+
+                    removeButton.on('click', (function (identifier, input, select) {
+                        return function () {
+                            var val = input.val();
+                            var storedValues = getStoredValues(identifier);
+                            var index = storedValues.indexOf(val);
+                            if (index !== -1) {
+                                storedValues.splice(index, 1);
+                                saveStoredValues(identifier, storedValues);
+                                select.find('option[value="' + val + '"]').remove();
+                            }
+                        };
+                    })(identifier, input, select));
+
+                    // Update input when select changes
+                    select.on('change', function () {
+                        input.val($(this).val());
+                    });
+
+                    // Append buttons
+                    var buttonGroup = $('<div class="input-group-append"></div>');
+                    buttonGroup.append(addButton);
+                    buttonGroup.append(removeButton);
+                    inputGroup.append(buttonGroup);
+
+                    // Append elements to form group
+                    formGroup.append(label);
+                    formGroup.append(inputGroup);
+
+                    // Display error if multiple defaults
+                    if (info.hasMultipleDefaults) {
+                        formGroup.append($('<div class="text-danger"></div>').text('Error: Multiple default values for ' + identifier));
+                    }
+
+                    variableForm.append(formGroup);
+                }
+            }
+
+            function interpolateYAML(yamlText, values) {
+                // Replace all {{ identifier }} with the corresponding values
+                var output = yamlText.replace(/{{\s*(.*?)\s*}}/g, function (match, p1) {
+                    var content = p1.trim();
+                    var parts = content.split('=');
+                    var identifier = parts[0].trim();
+                    if (values.hasOwnProperty(identifier)) {
+                        return values[identifier];
+                    } else if (parts[1]) {
+                        // Use default value if present
+                        return parts.slice(1).join('=').trim();
+                    } else {
+                        // If no value provided, leave as is or replace with empty string
+                        return '';
+                    }
+                });
+                return output;
+            }
+
+            function downloadFile(filename, content) {
+                var blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+                var url = URL.createObjectURL(blob);
+                var a = $('<a></a>').attr('href', url).attr('download', filename).appendTo('body');
+                a[0].click();
+                URL.revokeObjectURL(url);
+                a.remove();
+            }
+
+            $('#export-button').on('click', function () {
+                var yamlText = yamlEditor.val();
+                var values = {};
+                // Get values from the form
+                $('#variable-form input[type="text"]').each(function () {
+                    var name = $(this).attr('name');
+                    var value = $(this).val();
+                    values[name] = value;
+                });
+                // Replace the identifiers in the YAML text
+                var outputYAML = interpolateYAML(yamlText, values);
+                // Trigger download
+                downloadFile('output.yaml', outputYAML);
+            });
+
+            $('#save-button').on('click', function () {
+                var htmlContent = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+                var blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+                var url = URL.createObjectURL(blob);
+                var a = $('<a></a>').attr('href', url).attr('download', 'page.html').appendTo('body');
+                a[0].click();
+                URL.revokeObjectURL(url);
+                a.remove();
+            });
+        });
+    </script>
+</body>
+
+</html>
