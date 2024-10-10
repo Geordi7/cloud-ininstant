@@ -109,6 +109,12 @@
             padding: 2px 5px;
         }
 
+        .input-group-append .btn {
+            padding: 2px 5px;
+            font-size: 0.75rem;
+            margin-left: 2px;
+        }
+
         .btn {
             font-size: 0.85rem;
         }
@@ -312,18 +318,48 @@
                         return function () {
                             var val = $(this).val().trim();
                             sessionStorage.setItem('input_' + identifier, val);
-                            // If the value is not in storedValues, add it
-                            var storedValues = getStoredValues(identifier);
-                            if (val && storedValues.indexOf(val) === -1) {
-                                storedValues.push(val);
-                                saveStoredValues(identifier, storedValues);
-                            }
                         };
                     })(identifier));
 
                     // Append elements to input group
                     inputGroup.append(input);
                     inputGroup.append(datalist);
+
+                    // Add buttons
+                    var addButton = $('<button class="btn btn-outline-secondary" type="button">Add</button>');
+                    var removeButton = $('<button class="btn btn-outline-danger" type="button">Remove</button>');
+
+                    // Event handlers for add/remove buttons
+                    addButton.on('click', (function (identifier, input, datalist) {
+                        return function () {
+                            var val = input.val().trim();
+                            var storedValues = getStoredValues(identifier);
+                            if (val && storedValues.indexOf(val) === -1) {
+                                storedValues.push(val);
+                                saveStoredValues(identifier, storedValues);
+                                datalist.append($('<option></option>').attr('value', val));
+                            }
+                        };
+                    })(identifier, input, datalist));
+
+                    removeButton.on('click', (function (identifier, input, datalist) {
+                        return function () {
+                            var val = input.val().trim();
+                            var storedValues = getStoredValues(identifier);
+                            var index = storedValues.indexOf(val);
+                            if (index !== -1) {
+                                storedValues.splice(index, 1);
+                                saveStoredValues(identifier, storedValues);
+                                datalist.find('option[value="' + val + '"]').remove();
+                            }
+                        };
+                    })(identifier, input, datalist));
+
+                    // Append buttons
+                    var buttonGroup = $('<div class="input-group-append"></div>');
+                    buttonGroup.append(addButton);
+                    buttonGroup.append(removeButton);
+                    inputGroup.append(buttonGroup);
 
                     // Append elements to form group
                     formGroup.append(label);
@@ -442,7 +478,7 @@
                 for (var i = 0; i < localStorage.length; i++) {
                     var key = localStorage.key(i);
                     var value = localStorage.getItem(key);
-                    // Escape any occurrences of </sc ript> in the value
+                    // Escape any occurrences of </scr ipt> in the value
                     value = value.replace(/<\/script>/g, '<\\/script>');
                     scriptContent += 'localStorage.setItem(' + JSON.stringify(key) + ', ' + JSON.stringify(value) + ');\n';
                 }
